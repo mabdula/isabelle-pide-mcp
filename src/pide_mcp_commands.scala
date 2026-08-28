@@ -218,9 +218,10 @@ object PIDE_MCP_Commands {
       count += 1
       total_timing_ms += entry.timing_ms
       def count_detail(key: String, count: Int, detail: Boolean): Unit =
-        if (count > 0) { 
+        if (count > 0) {
           cmd_counts(key) += count
-          if (detail) cmd_details(key) ::= entry_json 
+          // details are bounded by the same limit, so that limit = 0 yields a lean summary
+          if (detail && limit.forall(cmd_details(key).length < _)) cmd_details(key) ::= entry_json
         }
       for (flag <- entry.status)
         count_detail(flag, 1, flag != Status.unprocessed && flag != Status.finished)
@@ -228,8 +229,11 @@ object PIDE_MCP_Commands {
       count_detail("errors", entry.errors, true)
       count_detail("warnings", entry.warnings, true)
     }
-    def detail_entry(key: String): (String, JSON.T) =
-      key -> JSON_Object("count" -> cmd_counts(key), "commands" -> cmd_details(key).reverse)
+    def detail_entry(key: String): (String, JSON.T) = {
+      val details = cmd_details(key).reverse
+      key -> JSON_Object("count" -> cmd_counts(key),
+        "count_returned" -> details.length, "commands" -> details)
+    }
     prefix_command_status_keys(JSON_Object(
       "total_timing_ms" -> total_timing_ms,
       detail_entry(Status.running),
