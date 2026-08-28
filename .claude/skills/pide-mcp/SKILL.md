@@ -21,6 +21,10 @@ Also load other SKILL files that describe tools offered by PIDE MCP.
 Operational rules (further elaborated in the sections below):
 
 - **After every edit, call `get_state`** to see status, errors, warnings.
+- **Pass `wait_until_processed: true` to `get_state` or `get_progress`** instead of calling them repeatedly: they block until the origin(s) are fully processed and then return the state. Never poll `get_state`/`get_progress` in a loop.
+- **`get_progress` waits for a LIST of origins** - list the ones you care about rather than omitting `origins`, since with no origins the wait covers every loaded theory and one stuck theory anywhere burns the whole `wait_timeout`. On timeout, `origins_unprocessed` names the theories to blame.
+- **Pass `commands_limit: 0` when you only need counts** (any errors? anything still running?); use a small limit (e.g. 5) to also see the first few offending commands.
+- **`get_progress` shows the 10 most interesting theories by default** (failed, then pending, then ok); raise `details_limit` to see more, or set it to 0 for global counts only.
 - **Restrict by `start_line` / `end_line`** when querying to avoid analysing data for hundreds of finished commands in large theories.
 - **`sorry` is reported as `bad`, not as an `error`.** A clean theory has 0 bad commands AND 0 errors AND 0 failures.
 - **If `> 0` commands are running for more than ~30s, suspect a loop** - restructure rather than wait.
@@ -48,7 +52,9 @@ Operational rules (further elaborated in the sections below):
 - **Proof methods typically terminate in less than 5 seconds.**
 - If commands take longer, be suspicious! Only if you are very confident that a proof legitimately needs more time wait a bit longer. Short waits typically let you move faster!
 - **If `get_state` shows `> 0` running commands for more than ~30 seconds, suspect non-termination** (a loop or overly expensive computation). Restructure rather than wait.
+- **Use `wait_until_processed: true` with a short `wait_timeout` (e.g. 20-30s) to detect non-termination in one call:** the response comes back with `"processed": false` and `"wait_timed_out": true` if commands are still running after the full wait, whereas `"processed": true` means processing really finished. Inspect `commands_still_running_possibly_nonterminating` to see which command is to blame.
 - **Use `get_progress` to show the progress and currently running commands across all theories.** 
+- **`get_progress` with `wait_until_processed` reports `"processed": true` only once every theory in question reaches `overall_status` ok or failed**, so its answer agrees with the per-theory status in the same response.
 
 ### Scratch Theories
 - **Use `create_scratch` to test large changes in a scratch theory before radically changing an existing theory.**

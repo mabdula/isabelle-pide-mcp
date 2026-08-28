@@ -25,4 +25,22 @@ object PIDE_MCP_Tool_Schema {
   val opt_end_line_prop =
     "end_line" -> JSON_Object("type" -> "integer",
       "description" -> "Last line to include (default: end of file).", "minimum" -> 1)
+
+  /* waiting for processing to finish, instead of polling */
+
+  val default_wait_timeout: Time = Time.seconds(120)
+
+  def wait_until_processed_prop(description: String) =
+    "wait_until_processed" -> JSON_Object("type" -> "boolean",
+      "description" -> (description
+        + " The wait is bounded by wait_timeout; on timeout, the current state is returned anyway with "
+        + "\"processed\": false and \"wait_timed_out\": true - that is the signal for a command that "
+        + "does not terminate, as opposed to one that is merely not done yet."),
+      "default" -> false)
+
+  val wait_timeout_prop =
+    "wait_timeout" -> JSON_Object("type" -> "number",
+      "description" -> ("Maximum time in seconds to block when wait_until_processed is set "
+        + "(default: " + default_wait_timeout.seconds.toInt + "). Ignored otherwise."),
+      "minimum" -> 0, "default" -> default_wait_timeout.seconds)
 }

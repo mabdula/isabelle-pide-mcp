@@ -96,6 +96,92 @@ class PIDE_MCP_Session private(
   def node_snapshot(node_name: Document.Node.Name): Exn.Result[Document.Snapshot] =
     switch(session.snapshot(), node_name)
 
+
+  /* processing status */
+
+  def node_status(
+    snapshot: Document.Snapshot,
+    node_name: Document.Node.Name
+  ): Document_Status.Node_Status =
+    Document_Status.Node_Status.make(Date.now(), snapshot.state, snapshot.version, node_name)
+
+  /*A theory node is processed if all its commands have terminated: nothing unprocessed,
+    nothing running, all proof forks joined (cf. Document_Status.Node_Status.terminated,
+    which Isabelle/Headless also uses to decide that a node is "quasi consolidated").
+    For auxiliary files, the load commands including them must have terminated.*/
+  def is_processed(snapshot: Document.Snapshot, node_name: Document.Node.Name): Boolean =
+    is_base_session_theory(node_name) || {
+      if (node_name.is_theory) {
+        val status = node_status(snapshot, node_name)
+        status.total > 0 && status.terminated
+      }
+      else {
+        val load_commands = snapshot.version.nodes.commands_loading(node_name)
+        load_commands.nonEmpty &&
+          load_commands.forall(snapshot.state.command_status(snapshot.version, _).is_terminated)
+      }
+    }
+
+  /*Stricter criterion, matching Document_Status.Overall_Status as reported by get_progress:
+    the node is not only terminated but also consolidated, i.e. the prover has finished the
+    theory as a whole. Consolidation is reported with a delay (option headless_consolidate_delay),
+    so this is up to ~2s slower than is_processed. Nodes that never get finalized (e.g. a theory
+    without its final "end") are covered by quasi_consolidated, exactly as in Headless.use_theories.*/
+  def is_consolidated(snapshot: Document.Snapshot, node_name: Document.Node.Name): Boolean =
+    is_base_session_theory(node_name) ||
+      (is_processed(snapshot, node_name) &&
+        (snapshot.state.node_consolidated(snapshot.version, node_name) ||
+          node_status(snapshot, node_name).quasi_consolidated))
+
+  /*Block until the given node has a stable, fully processed snapshot, or until the
+    timeout expires. Returns the resulting snapshot (which may still be an error, e.g. for
+    a node that has only just been queued for loading) together with the information
+    whether processing has finished. Waiting also stops early for a stable snapshot
+    satisfying "give_up", i.e. one that can never become processed. The criterion for being
+    done is is_processed by default; get_progress uses the stricter is_consolidated. Driven by PIDE
+    commands_changed events instead of polling. A timeout is deliberately not an error:
+    "still not processed after a full wait" is how a non-terminating command is detected.*/
+  def await_processed(
+    node_name: Document.Node.Name,
+    timeout: Time,
+    give_up: Document.Snapshot => Boolean = _ => false,
+    is_done: (Document.Snapshot, Document.Node.Name) => Boolean = is_processed
+  ): (Exn.Result[Document.Snapshot], Boolean) = {
+    def check(): Option[(Document.Snapshot, Boolean)] =
+      node_snapshot(node_name) match {
+        case Exn.Res(snapshot) if !snapshot.is_outdated =>
+          val processed = is_done(snapshot, node_name)
+          Option.when(processed || give_up(snapshot))((snapshot, processed))
+        case _ => None
+      }
+
+    val changed = Synchronized(0L)
+    val consumer =
+      Session.Consumer[Session.Commands_Changed]("PIDE_MCP await_processed") { _ =>
+        changed.change(_ + 1)
+      }
+
+    session.commands_changed += consumer
+    try {
+      val deadline = Time.now() + (timeout max Time.zero)
+      @tailrec def loop(): (Exn.Result[Document.Snapshot], Boolean) = {
+        val seen = changed.value // read before check(), so that no change can be missed
+        check() match {
+          case Some((snapshot, processed)) => (Exn.Res(snapshot), processed)
+          case None =>
+            if (Time.now() >= deadline) (node_snapshot(node_name), false)
+            else {
+              changed.timed_access[Unit](_ => Some(deadline),
+                count => Option.when(count != seen)(((), count)))
+              loop()
+            }
+        }
+      }
+      loop()
+    }
+    finally session.commands_changed -= consumer
+  }
+
   def switch(
     snapshot: => Document.Snapshot,
     node_name: Document.Node.Name
