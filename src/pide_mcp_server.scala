@@ -30,7 +30,12 @@ object RPC_Error {
 object PIDE_MCP_Server
 
 
-class PIDE_MCP_Server(session: PIDE_MCP_Session, log: Logger, verbose: Boolean = false) {
+class PIDE_MCP_Server(
+  session: PIDE_MCP_Session,
+  log: Logger,
+  verbose: Boolean = false,
+  require_reason: Boolean = false
+) {
 
   private def respond(out: PrintWriter, body: JSON.Object.T): Unit =
     out.synchronized {
@@ -74,12 +79,18 @@ class PIDE_MCP_Server(session: PIDE_MCP_Session, log: Logger, verbose: Boolean =
               "serverInfo" -> JSON_Object("name" -> Config.name, "version" -> Config.version),
               "instructions" -> ("Interactive proof development with Isabelle PIDE MCP. " +
                 "Add material incrementally - large edits make errors and nontermination hard to isolate. " +
-                "If a command takes longer than a few seconds, be suspicious and restructure rather than wait."))))
+                "If a command takes longer than a few seconds, be suspicious and restructure rather than wait." +
+                (if (require_reason)
+                  " Every tool call must carry a \"reason\" argument: one sentence saying what the call is for and why."
+                 else "")))))
 
           case Some("tools/list") =>
             val tools = session.tool_table.values.toList.sortBy(_.name).map { tool =>
+              val schema =
+                if (require_reason) PIDE_MCP_Tool_Schema.with_reason(tool.input_schema)
+                else tool.input_schema
               val entry = JSON_Object("name" -> tool.name, "description" -> tool.description,
-                "inputSchema" -> tool.input_schema)
+                "inputSchema" -> schema)
               tool.annotations match {
                 case Some(a) => entry + ("annotations" -> a)
                 case None => entry
@@ -124,8 +135,15 @@ class PIDE_MCP_Server(session: PIDE_MCP_Session, log: Logger, verbose: Boolean =
       parse_tool_call(request) match {
         case Some((name, args)) =>
           session.tool_table.get(name) match {
+            case Some(_) if require_reason &&
+                JSON.string(args, PIDE_MCP_Tool_Schema.reason_key).forall(_.trim.isEmpty) =>
+              respond(out, rpc_error(id, RPC_Error.INVALID_PARAMS,
+                "Missing required argument \"reason\": state in one sentence what this call is for " +
+                "and why, then retry the call."))
             case Some(tool) =>
-              tool.handle(args) match {
+              if (require_reason && verbose)
+                log(name + ": " + JSON.string(args, PIDE_MCP_Tool_Schema.reason_key).getOrElse(""))
+              tool.handle(args - PIDE_MCP_Tool_Schema.reason_key) match {
                 case Exn.Res(result) =>
                   val content_text = JSON.Format(result)
                   respond(out, rpc_result(id, JSON_Object(

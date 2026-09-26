@@ -43,4 +43,28 @@ object PIDE_MCP_Tool_Schema {
       "description" -> ("Maximum time in seconds to block when wait_until_processed is set "
         + "(default: " + default_wait_timeout.seconds.toInt + "). Ignored otherwise."),
       "minimum" -> 0, "default" -> default_wait_timeout.seconds)
+
+  /* per-call rationale, required when the server runs with -r */
+
+  val reason_key = "reason"
+  val reason_prop =
+    reason_key -> JSON_Object("type" -> "string", "minLength" -> 1,
+      "description" -> ("One sentence, written BEFORE the call: what you are about to do and why. "
+        + "Not part of the operation - it is recorded so a reader can see why each call was made."))
+
+  /* Put the reason property first, so an agent writes its rationale before the
+     operation's own arguments, and make it required. */
+  def with_reason(schema: JSON.Object.T): JSON.Object.T = {
+    val props = schema.get("properties") match {
+      case Some(JSON.Object(ps)) => ps
+      case _ => JSON.Object.empty
+    }
+    val required = schema.get("required") match {
+      case Some(xs: List[_]) => xs.collect { case x: String => x }
+      case _ => Nil
+    }
+    schema +
+      ("properties" -> (JSON_Object(reason_prop) ++ (props - reason_key))) +
+      ("required" -> (reason_key :: required.filterNot(_ == reason_key)))
+  }
 }

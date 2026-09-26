@@ -16,6 +16,7 @@ object PIDE_MCP {
       var options = Options.init()
       var log_path: Option[Path] = None
       var verbose = false
+      var require_reason = false
       var session_ancestor: Option[String] = None
       var session_requirements = false
       var fresh_build = false
@@ -32,6 +33,7 @@ Usage: isabelle pide_mcp [OPTIONS]
     -l NAME      logic session name (default: HOL)
 
     -o OPTION    override Isabelle system OPTION (via NAME=VAL or NAME)
+    -r           require a "reason" argument (one sentence) on every tool call
     -s           system build mode for session image (system_heaps=true)
     -u           user build mode for session image (system_heaps=false)
     -v           verbose
@@ -48,6 +50,8 @@ Usage: isabelle pide_mcp [OPTIONS]
         "l:" -> (arg => logic = arg),
 
         "o:" -> (arg => options = options + arg),
+
+        "r" -> (_ => require_reason = true),
         "s" -> (_ => options = options + "system_heaps=true"),
         "u" -> (_ => options = options + "system_heaps=false"),
         "v" -> (_ => verbose = true)
@@ -69,7 +73,7 @@ Usage: isabelle pide_mcp [OPTIONS]
         opt_session = Some(session)
         log("Session started. Now starting MCP server listening on stdin/stdout.")
 
-        val server = new PIDE_MCP_Server(session, log, verbose)
+        val server = new PIDE_MCP_Server(session, log, verbose, require_reason = require_reason)
         server.run()
       } catch {
         case ex: Exception =>
